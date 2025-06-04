@@ -43,6 +43,7 @@ vector<int> NeuralNetwork::getOutputNodeIds() const {
 
 // STUDENT TODO: IMPLEMENT
 vector<double> NeuralNetwork::predict(DataInstance instance) {
+    flush();
 
     vector<double> input = instance.x;
 
@@ -64,6 +65,8 @@ vector<double> NeuralNetwork::predict(DataInstance instance) {
     // In-degree tracking
     unordered_map<int, int> indegree;
     queue<int> q;
+
+    
 
     for (int i = 0; i < nodes.size(); i++) {
         indegree[i] = 0;
@@ -117,87 +120,90 @@ vector<double> NeuralNetwork::predict(DataInstance instance) {
 }
 // STUDENT TODO: IMPLEMENT
 bool NeuralNetwork::contribute(double y, double p) {
-    flush();  // reset node values and contributions cache
+    double incomingContribution = 0;
+    double outgoingContribution = 0;
 
-    // We accumulate contributions from all output nodes
-    for (int outputNodeId : outputNodeIds) {
-        double outgoingContribution = contribute(outputNodeId, y, p);
-        // Store contribution for output node in the contributions map
-        contributions[outputNodeId] = outgoingContribution;
-    }
-
-    // For the input layer nodes, we propagate the incoming contributions to their outgoing weights,
-    // but since input nodes have no bias, we don't call visitContributeNode on them.
     for (int inputNodeId : inputNodeIds) {
-        double incomingContribution = 0.0;
-        // For each outgoing connection from input node
         for (auto& connPair : adjacencyList[inputNodeId]) {
             Connection& c = connPair.second;
-            visitContributeNeighbor(c, incomingContribution, incomingContribution);
-            // We accumulate weight delta inside visitContributeNeighbor
+            if (contributions.find(c.dest) == contributions.end()) {
+                incomingContribution = contribute(c.dest, y, p);
+            } else {
+                incomingContribution = contributions[c.dest];
+            }
+
+            visitContributeNeighbor(c, incomingContribution, outgoingContribution);
         }
     }
-
-    batchSize += 1;
+    flush();  // Reset node values and contributions cache
     return true;
 }
 
+
 // STUDENT TODO: IMPLEMENT
 double NeuralNetwork::contribute(int nodeId, const double& y, const double& p) {
-    // Return cached contribution if already computed
-    if (contributions.count(nodeId)) {
-        return contributions[nodeId];
-    }
 
-    NodeInfo* currNode = nodes.at(nodeId);
+    double incomingContribution = 0;
     double outgoingContribution = 0;
+    NodeInfo* currNode = nodes.at(nodeId);  
+      
+    for (auto& connPair : adjacencyList[nodeId]) {
+            int neighborId = connPair.first;
+            Connection& conn = connPair.second;
+           if (contributions.find(conn.dest) == contributions.end()) {
+                incomingContribution = contribute(neighborId, y, p);
+            }
+            else{
+                incomingContribution = contributions[conn.dest];
 
+            }
+            // Accumulate weight delta for this connection (updates outgoingContribution)
+            visitContributeNeighbor(conn, incomingContribution, outgoingContribution);
+    }
     if (adjacencyList.at(nodeId).empty()) {
         // Base case: output node's gradient for cross-entropy loss with sigmoid activation
         outgoingContribution = -1 * ((y - p) / (p * (1 - p)));
-    } else {
-        double sum = 0;
+    } 
 
-        // Recursively accumulate contributions from neighbors
-        // Explicit reference to Connection
-        for (auto& connPair : adjacencyList[nodeId]) {
-            int neighborId = connPair.first;
-            Connection& conn = connPair.second;
-            double neighborContribution = contribute(neighborId, y, p);
-            visitContributeNeighbor(conn, neighborContribution, sum);
-        }
+    visitContributeNode(nodeId, outgoingContribution);
 
-
-        // Apply activation derivative and accumulate bias delta
-        outgoingContribution = sum;
-        visitContributeNode(nodeId, outgoingContribution);
-    }
-
-    // Cache contribution for this node
+    // Cache and return this node's contribution
     contributions[nodeId] = outgoingContribution;
-
     return outgoingContribution;
 }
 
 
+
+
 // STUDENT TODO: IMPLEMENT
 bool NeuralNetwork::update() {
-    // 1. Update biases and reset deltas for nodes
-    for (NodeInfo* node : nodes) {
-        node->bias -= learningRate * node->delta;
-        node->delta = 0;
-    }
+    for (int fromId = 0; fromId < nodes.size(); ++fromId) {
+        NodeInfo* fromNode = nodes[fromId];
 
-    // 2. Update weights and reset deltas for connections
-    for (auto& neighbors : adjacencyList) {
-        for (auto& [destId, connection] : neighbors) {
+        // Iterate over all outgoing connections from this node
+        for (auto& [toId, connection] : adjacencyList[fromId]) {
             connection.weight -= learningRate * connection.delta;
             connection.delta = 0;
         }
+
+        fromNode->bias -= learningRate * fromNode->delta;
+        fromNode->delta = 0;
     }
 
     return true;
 }
+
+
+    // 2. Update weights and reset deltas for connections
+    //for (auto& neighbors : adjacencyList) {
+     //   for (auto& [destId, connection] : neighbors) {
+      //      connection.weight -= learningRate * connection.delta;
+     //       connection.delta = 0;
+     //       }
+    //}
+
+    //return true;
+//}
 
 
 
